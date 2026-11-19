@@ -54,30 +54,30 @@ const sync=(a,b)=>a.timeScale().subscribeVisibleLogicalRangeChange(r=>{
   if(lock||!r)return; lock=true; b.timeScale().setVisibleLogicalRange(r); lock=false;});
 sync(main,rsiC); sync(rsiC,main);
 
-// ===== chỉ báo =====
-function EMA(data,p){
-  const k=2/(p+1); let e; const out=[];
-  data.forEach((c,i)=>{
-    e = i===0 ? c.close : c.close*k + e*(1-k);
-    if(i>=p-1) out.push({time:c.time,value:e});
-  }); return out;
-}
-function RSI(data,p=14){
-  const out=[]; let g=0,l=0;
-  for(let i=1;i<data.length;i++){
-    const d=data[i].close-data[i-1].close, up=Math.max(d,0), dn=Math.max(-d,0);
-    if(i<=p){g+=up/p; l+=dn/p;} else {g=(g*(p-1)+up)/p; l=(l*(p-1)+dn)/p;}
-    if(i>=p) out.push({time:data[i].time,value:l===0?100:100-100/(1+g/l)});
-  } return out;
-}
-function render(){
-  cs.setData(candles);
-  vol.setData(candles.map(c=>({time:c.time,value:c.volume,
-    color:c.close>=c.open?'#26a69a88':'#ef535088'})));
-  ema89.setData(EMA(candles,89));
-  ema200.setData(EMA(candles,200));
-  rsiS.setData(RSI(candles));
-}
+// // ===== chỉ báo =====
+// function EMA(data,p){
+//   const k=2/(p+1); let e; const out=[];
+//   data.forEach((c,i)=>{
+//     e = i===0 ? c.close : c.close*k + e*(1-k);
+//     if(i>=p-1) out.push({time:c.time,value:e});
+//   }); return out;
+// }
+// function RSI(data,p=14){
+//   const out=[]; let g=0,l=0;
+//   for(let i=1;i<data.length;i++){
+//     const d=data[i].close-data[i-1].close, up=Math.max(d,0), dn=Math.max(-d,0);
+//     if(i<=p){g+=up/p; l+=dn/p;} else {g=(g*(p-1)+up)/p; l=(l*(p-1)+dn)/p;}
+//     if(i>=p) out.push({time:data[i].time,value:l===0?100:100-100/(1+g/l)});
+//   } return out;
+// }
+// function render(){
+//   cs.setData(candles);
+//   vol.setData(candles.map(c=>({time:c.time,value:c.volume,
+//     color:c.close>=c.open?'#26a69a88':'#ef535088'})));
+//   ema89.setData(EMA(candles,89));
+//   ema200.setData(EMA(candles,200));
+//   rsiS.setData(RSI(candles));
+// }
 
 // ===== dữ liệu Binance =====
 async function load(){
