@@ -7,26 +7,55 @@
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   body{margin:0;background:#0b0b0b;color:#ddd;font:13px sans-serif}
-  .bar{display:flex;gap:6px;padding:8px;overflow-x:auto}
-  button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:5px 10px}
+  .bar{display:flex;gap:6px;padding:6px 8px;overflow-x:auto;white-space:nowrap}
+  button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:5px 10px;flex:none}
   button.on{background:#f0b90b;color:#000;border-color:#f0b90b}
-  #main{height:62vh} #rsi{height:20vh}
+  #main{height:56vh} #rsi{height:18vh}
 </style>
 </head>
 <body>
 <div class="bar" id="syms"></div>
 <div class="bar" id="tfs"></div>
+<div class="bar" id="inds"></div>
+<div class="bar" id="tools"></div>
 <div id="main"></div>
 <div id="rsi"></div>
+
+<!-- ===== LÕI ===== -->
+<script src="toolMain.js?v=1"></script>
+<script src="indicatorMain.js?v=1"></script>
+
+<!-- ===== CÔNG CỤ VẼ: thêm tool mới = thêm 1 dòng ở đây ===== -->
+<script src="tools/trend.js?v=1"></script>
+<script src="tools/ray.js?v=1"></script>
+<script src="tools/hline.js?v=1"></script>
+<script src="tools/vline.js?v=1"></script>
+<script src="tools/rect.js?v=1"></script>
+<script src="tools/measure.js?v=1"></script>
+<script src="tools/fibRetracement.js?v=1"></script>
+<script src="tools/fibExtension.js?v=1"></script>
+
+<!-- ===== CHỈ BÁO: thêm indicator mới = thêm 1 dòng ở đây ===== -->
+<script src="indicators/utils.js?v=1"></script>
+<script src="indicators/volume.js?v=1"></script>
+<script src="indicators/ema89.js?v=1"></script>
+<script src="indicators/ema200.js?v=1"></script>
+<script src="indicators/sonicr.js?v=1"></script>
+<script src="indicators/rsi.js?v=1"></script>
+<script src="indicators/snr.js?v=1"></script>
+<script src="indicators/volumeProfile.js?v=1"></script>
 
 <script>
 Telegram.WebApp.ready(); Telegram.WebApp.expand();
 
 const SYMS = ['BTCUSDT','ETHUSDT','BNBUSDT'];
 const TFS  = ['15m','1h','4h','1d'];
-let sym = 'BTCUSDT', tf = '4h', ws, candles = [];
+const HOSTS = ['https://api.binance.com','https://data-api.binance.vision'];
+let sym = 'BTCUSDT', tf = '4h', ws, candles = [], reqId = 0;
 
+// ===== tạo chart =====
 const opt = {
+  autoSize:true,
   layout:{background:{color:'#0b0b0b'},textColor:'#aaa'},
   grid:{vertLines:{color:'#161616'},horzLines:{color:'#161616'}},
   timeScale:{timeVisible:true,borderColor:'#333'},
@@ -35,18 +64,10 @@ const opt = {
 };
 const main = LightweightCharts.createChart(document.getElementById('main'), opt);
 const rsiC = LightweightCharts.createChart(document.getElementById('rsi'), opt);
-
 const cs = main.addCandlestickSeries({
   upColor:'#26a69a',downColor:'#ef5350',
   borderUpColor:'#26a69a',borderDownColor:'#ef5350',
   wickUpColor:'#26a69a',wickDownColor:'#ef5350'});
-const ema89  = main.addLineSeries({color:'#ff9800',lineWidth:2,priceLineVisible:false});
-const ema200 = main.addLineSeries({color:'#b39ddb',lineWidth:2,priceLineVisible:false});
-const vol = main.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:''});
-vol.priceScale().applyOptions({scaleMargins:{top:0.8,bottom:0}});
-const rsiS = rsiC.addLineSeries({color:'#9575cd',lineWidth:2});
-rsiS.createPriceLine({price:70,color:'#555',lineStyle:2});
-rsiS.createPriceLine({price:30,color:'#555',lineStyle:2});
 
 // đồng bộ 2 chart khi kéo/zoom
 let lock=false;
@@ -54,38 +75,34 @@ const sync=(a,b)=>a.timeScale().subscribeVisibleLogicalRangeChange(r=>{
   if(lock||!r)return; lock=true; b.timeScale().setVisibleLogicalRange(r); lock=false;});
 sync(main,rsiC); sync(rsiC,main);
 
-// ===== chỉ báo =====
-function EMA(data,p){
-  const k=2/(p+1); let e; const out=[];
-  data.forEach((c,i)=>{
-    e = i===0 ? c.close : c.close*k + e*(1-k);
-    if(i>=p-1) out.push({time:c.time,value:e});
-  }); return out;
-}
-function RSI(data,p=14){
-  const out=[]; let g=0,l=0;
-  for(let i=1;i<data.length;i++){
-    const d=data[i].close-data[i-1].close, up=Math.max(d,0), dn=Math.max(-d,0);
-    if(i<=p){g+=up/p; l+=dn/p;} else {g=(g*(p-1)+up)/p; l=(l*(p-1)+dn)/p;}
-    if(i>=p) out.push({time:data[i].time,value:l===0?100:100-100/(1+g/l)});
-  } return out;
-}
-function render(){
+// ===== khởi tạo công cụ + chỉ báo =====
+ToolMain.init({chart:main, series:cs, getCandles:()=>candles, bar:document.getElementById('tools')});
+IndicatorMain.init({main, rsiC, cs, getCandles:()=>candles, bar:document.getElementById('inds')});
+
+function render(full=true){
   cs.setData(candles);
-  vol.setData(candles.map(c=>({time:c.time,value:c.volume,
-    color:c.close>=c.open?'#26a69a88':'#ef535088'})));
-  ema89.setData(EMA(candles,89));
-  ema200.setData(EMA(candles,200));
-  rsiS.setData(RSI(candles));
+  IndicatorMain.render(full);
 }
 
 // ===== dữ liệu Binance =====
+async function getKlines(){
+  for(const h of HOSTS){
+    try{
+      const r = await fetch(`${h}/api/v3/klines?symbol=${sym}&interval=${tf}&limit=500`);
+      if(r.ok) return await r.json();
+    }catch(e){}
+  }
+  throw new Error('Không lấy được dữ liệu');
+}
+
 async function load(){
+  const my = ++reqId;
   if(ws) ws.close();
-  const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${tf}&limit=500`);
-  const j = await r.json();
+  ToolMain.clear();                       // bản vẽ của mã cũ sẽ sai giá nên xóa
+  const j = await getKlines();
+  if(my!==reqId) return;                  // người dùng đã bấm mã khác
   candles = j.map(k=>({time:k[0]/1000,open:+k[1],high:+k[2],low:+k[3],close:+k[4],volume:+k[5]}));
-  render(); main.timeScale().fitContent();
+  render(true); main.timeScale().fitContent();
 
   ws = new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${tf}`);
   ws.onmessage = e=>{
@@ -93,7 +110,7 @@ async function load(){
     const c = {time:k.t/1000,open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
     const last = candles[candles.length-1];
     if(last.time===c.time) candles[candles.length-1]=c; else candles.push(c);
-    render();
+    render(false);                        // false = bỏ qua chỉ báo nặng (SNR)
   };
 }
 
@@ -109,10 +126,6 @@ function buttons(id,list,get,set){
 }
 buttons('syms',SYMS,()=>sym,v=>sym=v);
 buttons('tfs',TFS,()=>tf,v=>tf=v);
-addEventListener('resize',()=>{
-  main.resize(innerWidth,document.getElementById('main').clientHeight);
-  rsiC.resize(innerWidth,document.getElementById('rsi').clientHeight);
-});
 load();
 </script>
 </body>
