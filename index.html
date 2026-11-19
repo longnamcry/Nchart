@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  body{margin:0;background:#0b0b0b;color:#ddd;font:13px sans-serif}
+  .bar{display:flex;gap:6px;padding:8px;overflow-x:auto}
+  button{background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:6px;padding:5px 10px}
+  button.on{background:#f0b90b;color:#000;border-color:#f0b90b}
+  #main{height:62vh} #rsi{height:20vh}
+</style>
+</head>
+<body>
+<div class="bar" id="syms"></div>
+<div class="bar" id="tfs"></div>
+<div id="main"></div>
+<div id="rsi"></div>
+
+<script>
+Telegram.WebApp.ready(); Telegram.WebApp.expand();
+
+const SYMS = ['BTCUSDT','ETHUSDT','BNBUSDT'];
+const TFS  = ['15m','1h','4h','1d'];
+let sym = 'BTCUSDT', tf = '4h', ws, candles = [];
+
+const opt = {
+  layout:{background:{color:'#0b0b0b'},textColor:'#aaa'},
+  grid:{vertLines:{color:'#161616'},horzLines:{color:'#161616'}},
+  timeScale:{timeVisible:true,borderColor:'#333'},
+  rightPriceScale:{borderColor:'#333'},
+  crosshair:{mode:0}
+};
+const main = LightweightCharts.createChart(document.getElementById('main'), opt);
+const rsiC = LightweightCharts.createChart(document.getElementById('rsi'), opt);
+
+const cs = main.addCandlestickSeries({
+  upColor:'#26a69a',downColor:'#ef5350',
+  borderUpColor:'#26a69a',borderDownColor:'#ef5350',
+  wickUpColor:'#26a69a',wickDownColor:'#ef5350'});
+const ema89  = main.addLineSeries({color:'#ff9800',lineWidth:2,priceLineVisible:false});
+const ema200 = main.addLineSeries({color:'#b39ddb',lineWidth:2,priceLineVisible:false});
+const vol = main.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:''});
+vol.priceScale().applyOptions({scaleMargins:{top:0.8,bottom:0}});
+const rsiS = rsiC.addLineSeries({color:'#9575cd',lineWidth:2});
+rsiS.createPriceLine({price:70,color:'#555',lineStyle:2});
+rsiS.createPriceLine({price:30,color:'#555',lineStyle:2});
+
+// đồng bộ 2 chart khi kéo/zoom
+let lock=false;
+const sync=(a,b)=>a.timeScale().subscribeVisibleLogicalRangeChange(r=>{
+  if(lock||!r)return; lock=true; b.timeScale().setVisibleLogicalRange(r); lock=false;});
+sync(main,rsiC); sync(rsiC,main);
+
+// ===== chỉ báo =====
+function EMA(data,p){
+  const k=2/(p+1); let e; const out=[];
+  data.forEach((c,i)=>{
+    e = i===0 ? c.close : c.close*k + e*(1-k);
+    if(i>=p-1) out.push({time:c.time,value:e});
+  }); return out;
+}
+function RSI(data,p=14){
+  const out=[]; let g=0,l=0;
+  for(let i=1;i<data.length;i++){
+    const d=data[i].close-data[i-1].close, up=Math.max(d,0), dn=Math.max(-d,0);
+    if(i<=p){g+=up/p; l+=dn/p;} else {g=(g*(p-1)+up)/p; l=(l*(p-1)+dn)/p;}
+    if(i>=p) out.push({time:data[i].time,value:l===0?100:100-100/(1+g/l)});
+  } return out;
+}
+function render(){
+  cs.setData(candles);
+  vol.setData(candles.map(c=>({time:c.time,value:c.volume,
+    color:c.close>=c.open?'#26a69a88':'#ef535088'})));
+  ema89.setData(EMA(candles,89));
+  ema200.setData(EMA(candles,200));
+  rsiS.setData(RSI(candles));
+}
+
+// ===== dữ liệu Binance =====
+async function load(){
+  if(ws) ws.close();
+  const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${tf}&limit=500`);
+  const j = await r.json();
+  candles = j.map(k=>({time:k[0]/1000,open:+k[1],high:+k[2],low:+k[3],close:+k[4],volume:+k[5]}));
+  render(); main.timeScale().fitContent();
+
+  ws = new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${tf}`);
+  ws.onmessage = e=>{
+    const k = JSON.parse(e.data).k;
+    const c = {time:k.t/1000,open:+k.o,high:+k.h,low:+k.l,close:+k.c,volume:+k.v};
+    const last = candles[candles.length-1];
+    if(last.time===c.time) candles[candles.length-1]=c; else candles.push(c);
+    render();
+  };
+}
+
+// ===== nút chọn mã / khung thời gian =====
+function buttons(id,list,get,set){
+  const el=document.getElementById(id); el.innerHTML='';
+  list.forEach(v=>{
+    const b=document.createElement('button'); b.textContent=v;
+    if(get()===v) b.className='on';
+    b.onclick=()=>{set(v); buttons(id,list,get,set); load();};
+    el.appendChild(b);
+  });
+}
+buttons('syms',SYMS,()=>sym,v=>sym=v);
+buttons('tfs',TFS,()=>tf,v=>tf=v);
+addEventListener('resize',()=>{
+  main.resize(innerWidth,document.getElementById('main').clientHeight);
+  rsiC.resize(innerWidth,document.getElementById('rsi').clientHeight);
+});
+load();
+</script>
+</body>
+</html>
